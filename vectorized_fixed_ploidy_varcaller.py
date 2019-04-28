@@ -4,14 +4,13 @@ import numpy as np
 
 
 # initial error rates
-error_rates = {
+initial_error_rates = {
     "A": {"A": 0.99,   "C": 0.0025, "G": 0.0025, "T": 0.0025, "-": 0.0025},
     "C": {"A": 0.0025, "C": 0.99,   "G": 0.0025, "T": 0.0025, "-": 0.0025},
     "G": {"A": 0.0025, "C": 0.0025, "G": 0.99,   "T": 0.0025, "-": 0.0025},
     "T": {"A": 0.0025, "C": 0.0025, "G": 0.0025, "T": 0.99,   "-": 0.0025},
     "-": {"A": 0,      "C": 0,      "G": 0,      "T": 0,      "-": 1},
 }
-
 
 # bases order in matrix ACGT-
 bases_index = {
@@ -21,7 +20,6 @@ bases_index = {
     "T": 3,
     "-": 4
 }
-
 
 alignment = np.array([
     ["A", "T", "A", "A", "C", "G", "T"],
@@ -61,7 +59,7 @@ def prob_t_N(genotype, base):
     return cnter.get(base, 0) * 1/len(genotype)
 
 
-def likelihood_genotype(genotype, bases_all_reads):
+def likelihood_genotype(genotype, bases_all_reads, error_rates):
     """
     str genotype
     iterable-obj bases_all_reads, list or np.array
@@ -80,11 +78,11 @@ def likelihood_genotype(genotype, bases_all_reads):
     return likelihood
 
 
-def prob_N_data(bases_all_reads):
+def prob_N_data(bases_all_reads, prior_matrix, error_rates):
     """
     prod: prod of P(rih=N, nih|s) == P(rih=N,nih|s) * prod of P(njh|s)
     m_small: P(N|geno) of bases_all_reads at a given site
-    m_big: P()
+    m_big: P(N, i)
     """
     m_small = np.zeros((genotype_num, 5))
     m_big = np.zeros((K, 5))
@@ -108,43 +106,72 @@ def prob_N_data(bases_all_reads):
     return p_base_matrix
 
 
-def update_prior_probs():
-    global prior_matrix
+def posterior_probs(prior_matrix, error_rates):
     likelihood_matrix = np.zeros((genotype_num, H))
     for h in range(H):
         for g, geno in enumerate(all_geno):
-            likelihood = likelihood_genotype(geno, alignment[:, h])
+            likelihood = likelihood_genotype(geno, alignment[:, h], error_rates)
             likelihood_matrix[g][h] = likelihood
 
     geno_data_matrix = likelihood_matrix * prior_matrix
     post_matrix = geno_data_matrix / geno_data_matrix.sum(axis=0)
-    prior_matrix = (post_matrix.sum(axis=1) / H)[:, np.newaxis]
+    # prior_matrix = (post_matrix.sum(axis=1) / H)[:, np.newaxis]
     return post_matrix
 
-def update_error_rates():
-    global error_rates
+
+def update_prior_probs(post_matrix):
+    updated_prior_matrix = (post_matrix.sum(axis=1) / H)[:, np.newaxis]
+    return updated_prior_matrix
+
+
+def update_error_rates(prior_matrix, error_rates):
+    updated_error_rates = {
+        "-": {"A": 0, "C": 0, "G": 0, "T": 0, "-": 1},
+    }
     base_prob_matrix = np.zeros((H, K, 5))
     for h in range(H):
-        base_prob_matrix[h] = prob_N_data(list(alignment[:, h]))
+        base_prob_matrix[h] = prob_N_data(
+                               list(alignment[:, h]), prior_matrix, error_rates)
 
     base_total_prob = base_prob_matrix.sum(axis=0).sum(axis=0)
     for base in "ACGT":
         for error_base in "ACGT-":
+            # p_error: P(base|error_base)
             p_error = 0
             for h in range(H):
                 m = base_prob_matrix[h]
-                p_error += (m[alignment[:, h]==error_base])[:, bases_index[base]].sum()
-            error_rates[base][error_base] = p_error / base_total_prob[bases_index[base]]
+                p_error += (
+                    (m[alignment[:, h]==error_base])[:, bases_index[base]].sum()
+                )
+            updated_error_rates.setdefault(base, {})[error_base] = (
+                                p_error / base_total_prob[bases_index[base]])
+    return updated_error_rates
 
 
 # initializition
 K, H = alignment.shape
 all_geno = all_genotype(2)
 genotype_num = len(all_geno)
+initial_prior_matrix = np.full(shape=(genotype_num, 1),
+                                fill_value=1/genotype_num)
+ROUNDS = 4
 
-prior_matrix = np.full(shape=(genotype_num, 1), fill_value=1/genotype_num)
-for round_ in range(4):
-    tmp = update_prior_probs()
-    update_error_rates()
-p_m = update_prior_probs()
+initial_post_matrix = posterior_probs(initial_prior_matrix,
+                                        initial_error_rates)
+updated_prior_matrix = update_prior_probs(initial_post_matrix)
+updated_error_rates = update_error_rates(initial_prior_matrix,
+                                            initial_error_rates)
 
+
+for r in range(ROUNDS - 1):
+    updated_post_matrix = posterior_probs(updated_prior_matrix,
+                                            updated_error_rates)
+    updated_prior_matrix = update_prior_probs(updated_post_matrix)
+    updated_error_rates = update_error_rates(updated_prior_matrix,
+                                                updated_error_rates)
+
+final_post_matrix = posterior_probs(updated_prior_matrix, updated_error_rates)
+for h in range(H):
+    p = final_post_matrix[:, h].max()
+    genotype = all_geno[np.argmax(final_post_matrix[:, h])]
+    print(genotype, p)
