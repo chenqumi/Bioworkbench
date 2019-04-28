@@ -1,3 +1,4 @@
+from collections import Counter
 from itertools import combinations_with_replacement as cwr
 import numpy as np
 
@@ -64,15 +65,12 @@ def prob_t_N(genotype, base):
     str base
     return P(base in genotype)
 
-    diploid: P_AA(A) = 1, P_AA(C) = 0, P_AC(A) = 0.5, P_AC(C) = 0.5
+    diploid:    P_AA(A) = 1, P_AA(C) = 0, P_AC(A) = 0.5, P_AC(C) = 0.5
+    triploid:   P_AAA(A) = 1, P_AAC(A) = 2/3
+    tetraploid: P_AAAA(A) = 1, P_AACC(A) = 0.5, P_ACGT(A) = 0.25
     """
-    p = 0.0
-    if base not in genotype:
-        p = 0.0
-    else:
-        p = 1.0 if genotype[0] == genotype[1] else 0.5
-
-    return p
+    cnter = Counter(genotype)
+    return cnter.get(base, 0) * 1/len(genotype)
 
 
 def likelihood_genotype(genotype, bases_all_reads):
